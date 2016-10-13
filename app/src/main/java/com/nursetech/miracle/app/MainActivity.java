@@ -1,19 +1,16 @@
 package com.nursetech.miracle.app;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.Set;
-import java.util.UUID;
-
 import android.app.Activity;
+import android.app.ProgressDialog;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -22,7 +19,18 @@ import android.util.Log;
 import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.ListView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
 
 
 public class MainActivity extends Activity {
@@ -35,16 +43,57 @@ public class MainActivity extends Activity {
     private BluetoothDevice miracle = null;
     private Handler mHandler;
     private MiracleManager timerManager;
+    private ProgressDialog mProgressDlg;
 
     BluetoothAdapter mBluetoothAdapter;
-    Set<BluetoothDevice> pairedDevices;
+    Set<BluetoothDevice> mDeviceList;
     ArrayAdapter<String> mArrayAdapter;
     ListView listview;
+
+    private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+
+            if (BluetoothAdapter.ACTION_STATE_CHANGED.equals(action)) {
+                final int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+
+                if (state == BluetoothAdapter.STATE_ON) {
+                    showToast("Enabled");
+
+                    showEnabled();
+                }
+            } else if (BluetoothAdapter.ACTION_DISCOVERY_STARTED.equals(action)) {
+                mDeviceList = new HashSet<BluetoothDevice>();
+
+                mProgressDlg.show();
+            } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
+                mProgressDlg.dismiss();
+
+                Intent newIntent = new Intent(MainActivity.this, DeviceListActivity.class);
+
+                newIntent.putParcelableArrayListExtra("device.list", new ArrayList<>(mDeviceList));
+
+                startActivity(newIntent);
+            } else if (BluetoothDevice.ACTION_FOUND.equals(action)) {
+                BluetoothDevice device = (BluetoothDevice) intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+
+                mDeviceList.add(device);
+
+                showToast("Found device " + device.getName());
+            }
+        }
+    };
+    private TextView mStatus;
+    private Button mScanBtn;
+    private Button mPairedBtn;
 
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setContentView(R.layout.activity_main);
+        mStatus 			= (TextView) findViewById(R.id.tv_status);
+        mScanBtn 		= (Button) findViewById(R.id.btn_scan);
+        mPairedBtn 			= (Button) findViewById(R.id.btn_view_paired);
         listview = (ListView) findViewById(R.id.listView1);
         mArrayAdapter = new ArrayAdapter<String>(this,
                 android.R.layout.simple_list_item_1, android.R.id.text1);
@@ -56,12 +105,22 @@ public class MainActivity extends Activity {
                 switch (message.what) {
                     case MESSAGE_READ:
                         timerManager.processMessage(message);
-                        //Log.d("DARIEN", message.arg1+"");
-                        //Log.d("RAW", message.toString());
+                        Log.d("RAW MESSAGE", message.arg1+"");
                         break;
                 }
             }
         };
+        mProgressDlg = new ProgressDialog(this);
+        mProgressDlg.setMessage("Scanning...");
+        mProgressDlg.setCancelable(false);
+        mProgressDlg.setButton(DialogInterface.BUTTON_NEGATIVE, "Cancel", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                dialog.dismiss();
+
+                mBluetoothAdapter.cancelDiscovery();
+            }
+        });
         setupBluetooth();
     }
 
@@ -74,10 +133,9 @@ public class MainActivity extends Activity {
     }
 
 
-    @SuppressWarnings("unused")
     private void setupBluetooth() {
         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-        pairedDevices = mBluetoothAdapter.getBondedDevices();
+        mDeviceList = mBluetoothAdapter.getBondedDevices();
 
 
         if (mBluetoothAdapter == null) {
@@ -89,9 +147,9 @@ public class MainActivity extends Activity {
             startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
         }
         // If there are paired devices
-        if (pairedDevices.size() > 0) {
+        if (mDeviceList.size() > 0) {
             // Loop through paired devices
-            for (BluetoothDevice device : pairedDevices) {
+            for (BluetoothDevice device : mDeviceList) {
                 // Add the name and address to an array adapter to show in a ListView
                 mArrayAdapter.add(device.getName() + "\n" + device.getAddress());
                 if (device.getAddress().equals(miracleAddress)){
@@ -231,8 +289,9 @@ public class MainActivity extends Activity {
                     // Read from the InputStream
                     bytes = mmInStream.read(buffer);
                     // Send the obtained bytes to the UI activity
-                    //Log.d("RAW", new String(buffer, "ASCII").substring(0,6));
-                    mHandler.obtainMessage(MESSAGE_READ, bytes, -1, buffer)
+                    Log.d("RAW", new String(buffer, "UTF-8").replaceAll("[^A-Za-z0-9(),\\[\\]]", ""));
+
+					mHandler.obtainMessage(MESSAGE_READ, bytes, -1, buffer)
                             .sendToTarget();
                 } catch (IOException e) {
                     break;
@@ -258,5 +317,25 @@ public class MainActivity extends Activity {
             } catch (IOException e) {
             }
         }
+    }
+
+    private void showEnabled() {
+        mStatus.setText("Bluetooth is On");
+        mStatus.setTextColor(Color.BLUE);
+
+        mPairedBtn.setEnabled(true);
+        mScanBtn.setEnabled(true);
+    }
+
+    private void showDisabled() {
+        mStatus.setText("Bluetooth is Off");
+        mStatus.setTextColor(Color.RED);
+
+        mPairedBtn.setEnabled(false);
+        mScanBtn.setEnabled(false);
+    }
+
+    private void showToast(String message) {
+        Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show();
     }
 }
