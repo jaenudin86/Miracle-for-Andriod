@@ -95,7 +95,7 @@ public class MainActivity extends Activity {
         mScanBtn 		= (Button) findViewById(R.id.btn_scan);
         mPairedBtn 			= (Button) findViewById(R.id.btn_view_paired);
         listview = (ListView) findViewById(R.id.listView1);
-        mArrayAdapter = new ArrayAdapter<>(this,
+        mArrayAdapter = new ArrayAdapter<String>(this,
                 android.R.layout.simple_list_item_1, android.R.id.text1);
         listview.setAdapter(mArrayAdapter);
         timerManager = new MiracleManager(this, mArrayAdapter);
