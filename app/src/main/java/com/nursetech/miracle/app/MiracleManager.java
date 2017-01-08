@@ -1,163 +1,102 @@
 package com.nursetech.miracle.app;
 
-import java.text.SimpleDateFormat;
-import java.util.Calendar;
-import java.util.HashMap;
-
 import android.app.PendingIntent;
 import android.content.Intent;
-import android.graphics.BitmapFactory;
-import android.os.CountDownTimer;
+import android.os.Handler;
 import android.os.Message;
-import android.util.Log;
-import android.widget.ArrayAdapter;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.NotificationManagerCompat;
+import android.util.Log;
+import android.widget.ArrayAdapter;
+
+import com.google.common.collect.ImmutableMap;
+
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Locale;
+import java.util.Map;
+
+import static com.nursetech.miracle.app.MiracleManager.State.ALERT;
+import static com.nursetech.miracle.app.MiracleManager.State.END_OF_CYCLE;
+import static com.nursetech.miracle.app.MiracleManager.State.INSERTION;
+import static com.nursetech.miracle.app.MiracleManager.State.REMOVAL;
+import static com.nursetech.miracle.app.MiracleManager.State.STANDBY_WAITING_FOR_CONTAINER_TO_RETURN;
+import static com.nursetech.miracle.app.MiracleManager.State.UNKNOWN;
 
 
-/*
- * On alert: when =0 and arg1 = 10 arg2 = 2
- */
-public class MiracleManager {
+public class MiracleManager extends Handler{
     private String MEDICATION = "Ibuprofen";
-    private State currentState = State.INITIAL;
     private int alertCount = 0;
-    private String incomingSequence = "";
-    private MainActivity activity;
+    private MainActivity mActivity;
     private ArrayAdapter<String> mArrayAdapter;
     private final int NOTIFICATION_ID = 001;
-    NotificationManagerCompat notificationManager;
+    private NotificationManagerCompat notificationManager;
+	private static final String TAG = MiracleManager.class.getSimpleName();
+	private static final DateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
 
 
 
     public enum State {
-        INITIAL, STANDBY, ALERT, PROPER_REMOVAL_OR_REPLACE, PREMATURE_REMOVAL_OR_REPLACE
-    }
-    private CountDownTimer timer = new CountDownTimer(300, 300) {
-
-        public void onTick(long millisUntilFinished) {
-        }
-
-        public void onFinish() {
-            if(incomingSequence.charAt(0)=='1' && incomingSequence.charAt(incomingSequence.length()-1)=='7')
-                currentState = State.INITIAL;
-            else{
-                State newState = validCodeSums.get(sumDigits(incomingSequence));
-                if (newState == null)
-                    Log.d("DARIEN", "ERROR ON: " + incomingSequence);
-                postMessage(newState);
-            }
-            incomingSequence = "";
-        }
-    };
-    private HashMap<Integer, State> validCodeSums = new HashMap<Integer, State>() {{
-        put(1, State.ALERT);
-        put(10, State.ALERT);
-        put(11, State.INITIAL);
-        put(20, State.INITIAL);
-        put(21, State.PREMATURE_REMOVAL_OR_REPLACE);
-        put(31, State.PROPER_REMOVAL_OR_REPLACE);
-        put(41, State.PROPER_REMOVAL_OR_REPLACE);
-        put(22, State.PROPER_REMOVAL_OR_REPLACE);
-    }};
-
-    public void testNotification() {
-        postMessage(State.INITIAL);
+        STANDBY_WAITING_FOR_CONTAINER_TO_RETURN, ALERT, REMOVAL, INSERTION, END_OF_CYCLE, UNKNOWN
     }
 
-    public MiracleManager(MainActivity activity, ArrayAdapter<String> mArrayAdapter) {
-        this.activity = activity;
-        this.mArrayAdapter = mArrayAdapter;
+    final private Map<String, State> mStateHashMap = new ImmutableMap.Builder<String, State>()
+        .put("EVENT,1,1", ALERT)
+        .put("EVENT,1,2", STANDBY_WAITING_FOR_CONTAINER_TO_RETURN)
+        .put("EVENT,0,0", REMOVAL)
+        .put("EVENT,0,1", INSERTION)
+        .put("EVENT,1,3", END_OF_CYCLE)
+        .put("EVENT,0,-1", UNKNOWN).build();
+
+    MiracleManager(MainActivity activity, ArrayAdapter<String> arrayAdapter) {
+        mActivity = activity;
+        mArrayAdapter = arrayAdapter;
         notificationManager = NotificationManagerCompat.from(activity);
     }
 
-    public void processMessage(Message message) {
-        timer.cancel();
-        timer.start();
-        incomingSequence += message.arg1;
-        Log.d("DARIEN", "CODE: " + incomingSequence);
-    }
-
-    public void postMessage(State incomingState) {
-        String date = getDate();
-
-        switch (currentState) {
-            case INITIAL:
-                if (incomingState.equals(State.INITIAL)) {
-                    final String message = "Device starting up at " + date;
-                    mArrayAdapter.add(message);
-                    currentState = State.STANDBY;
-                    generateNotification(incomingState.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
-                }
-                break;
-            case STANDBY:
-                if (incomingState.equals(State.ALERT)) {
-                    alertCount++;
-                    final String message = "Alert " + alertCount + " at " + date;
-                    mArrayAdapter.add(message);
-                    currentState = State.ALERT;
-                    generateNotification(incomingState.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
-                } else if (incomingState.equals(State.PREMATURE_REMOVAL_OR_REPLACE)) {
-                    final String message = "Premature removal at " + date;
-                    mArrayAdapter.add(message);
-                    currentState = State.PREMATURE_REMOVAL_OR_REPLACE;
-                    generateNotification(incomingState.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
-                }
-                break;
-            case ALERT:
-                if (incomingState.equals(State.PROPER_REMOVAL_OR_REPLACE)) {
-                    final String message = "Container removed at " + date;
-                    mArrayAdapter.add(message);
-                    currentState = State.PROPER_REMOVAL_OR_REPLACE;
-                    generateNotification(incomingState.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
-                } else if (incomingState.equals(State.ALERT)) {
-                    final String message = "??? hit an Invalid State " + date;
-                    mArrayAdapter.add(message);
-                    currentState = State.STANDBY;
-                    generateNotification(incomingState.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
-                }
-                break;
-            case PROPER_REMOVAL_OR_REPLACE:
-                if (incomingState.equals(State.PROPER_REMOVAL_OR_REPLACE) || incomingState.equals(State.PREMATURE_REMOVAL_OR_REPLACE)) {
-                    final String message = "Container returned at " + date;
-                    mArrayAdapter.add(message);
-                    currentState = State.STANDBY;
-                    generateNotification(incomingState.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
-                }
-                break;
-            case PREMATURE_REMOVAL_OR_REPLACE:
-                if (incomingState.equals(State.PREMATURE_REMOVAL_OR_REPLACE)) {
-                    final String message = "Container returned at " + date;
-                    mArrayAdapter.add(message);
-                    currentState = State.STANDBY;
-                }
-                break;
-            default:
-                break;
-        }
-    }
-
-    private String getDate() {
-        Calendar c = Calendar.getInstance();
-        SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-        return df.format(c.getTime());
-    }
-
-    private int sumDigits(String input){
-        int sum = 0;
-        for(char s : input.toCharArray())
-            sum+=s-'0';
-        return sum;
-    }
+	@Override
+	public void handleMessage(Message msg) {
+		final String parsedMessage = ((String) msg.obj).replace("EE","E");
+		Log.d(TAG, parsedMessage);
+		String message;
+		final String date = DATE_FORMAT.format(Calendar.getInstance().getTime());
+		final State state = mStateHashMap.get(parsedMessage);
+		if(state != null) {
+			switch (state) {
+				case ALERT:
+					message = "Alert " + alertCount++ + " at " + date;
+					mArrayAdapter.add(message);
+					generateNotification(ALERT.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
+					break;
+				case REMOVAL:
+					message = "Container removed at " + date;
+					mArrayAdapter.add("Container removed at " + date);
+					//generateNotification(REMOVAL.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
+					break;
+				case INSERTION:
+					message = "Container returned at " + date;
+					mArrayAdapter.add(message);
+					//generateNotification(INSERTION.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
+					break;
+				case END_OF_CYCLE:
+					message = "End of dosing cycle!";
+					mArrayAdapter.add(message);
+					generateNotification(END_OF_CYCLE.ordinal(), R.drawable.ic_launcher, MEDICATION, message);
+					alertCount=0;
+					break;
+			}
+		}
+	}
 
     private void generateNotification(int eventId, int ic_event, CharSequence eventTitle, CharSequence eventDetails) {
-        Intent viewIntent = new Intent(activity, MainActivity.class);
+        Intent viewIntent = new Intent(mActivity, MainActivity.class);
         //viewIntent.putExtra(EXTRA_EVENT_ID, eventId);
         PendingIntent viewPendingIntent =
-                PendingIntent.getActivity(activity, 0, viewIntent, 0);
+                PendingIntent.getActivity(mActivity, 0, viewIntent, 0);
 
         NotificationCompat.Builder notificationBuilder =
-                new NotificationCompat.Builder(activity)
+                new NotificationCompat.Builder(mActivity)
                         .setSmallIcon(ic_event)
                         .setContentTitle(eventTitle)
                         .setContentText(eventDetails)

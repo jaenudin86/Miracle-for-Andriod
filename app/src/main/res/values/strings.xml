@@ -13,5 +13,9 @@
     <string name="text_list_devices">List of Devices</string>
 
     <string name="text_pair">Pair</string>
+    <string name="searching">Searching for Miracle</string>
+    <string name="connected">Connected</string>
+    <string name="not_paired">No Miracle paired to device</string>
+    <string name="cancelled">Cancelled</string>
 
 </resources>
