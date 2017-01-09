@@ -1,6 +1,5 @@
 package com.nursetech.miracle.app;
 
-import android.app.Activity;
 import android.app.ProgressDialog;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -15,8 +14,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.support.annotation.NonNull;
+import android.support.design.widget.Snackbar;
 import android.support.v4.content.ContextCompat;
+import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.view.Menu;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.ArrayAdapter;
@@ -25,7 +27,10 @@ import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.firebase.ui.auth.AuthUI;
+import com.firebase.ui.auth.ui.ResultCodes;
 import com.google.common.collect.Sets;
+import com.google.firebase.auth.FirebaseAuth;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -33,13 +38,15 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Set;
 import java.util.UUID;
 
 
-public class MainActivity extends Activity {
+public class MainActivity extends AppCompatActivity {
     private static final int REQUEST_ENABLE_BT = 100;
-    private static final String TAG = MainActivity.class.getSimpleName();
+	private static final int RC_SIGN_IN = 123;
+	private static final String TAG = MainActivity.class.getSimpleName();
     private static UUID MY_UUID = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
 
     private final String miracleAddress = "00:06:66:4F:E7:80";
@@ -53,6 +60,7 @@ public class MainActivity extends Activity {
     private ArrayAdapter<String> mArrayAdapter;
     private ListView listview;
 	private BroadcastReceiver mReceiver;
+	private boolean mIsReceiverRegistered = false;
 
 	private TextView mStatus;
 	private Button mScanBtn;
@@ -124,13 +132,28 @@ public class MainActivity extends Activity {
             }
         });
 		mStatus.setText(R.string.searching);
-        setupBluetooth();
+		FirebaseAuth auth = FirebaseAuth.getInstance();
+		if (auth.getCurrentUser() != null) {
+			// already signed in
+			setupBluetooth();
+		} else {
+			startActivityForResult(
+					AuthUI.getInstance()
+							.createSignInIntentBuilder()
+							.setProviders(Arrays.asList(new AuthUI.IdpConfig.Builder(AuthUI.EMAIL_PROVIDER).build(),
+									new AuthUI.IdpConfig.Builder(AuthUI.GOOGLE_PROVIDER).build(),
+									new AuthUI.IdpConfig.Builder(AuthUI.FACEBOOK_PROVIDER).build(),
+									new AuthUI.IdpConfig.Builder(AuthUI.TWITTER_PROVIDER).build()))
+							.setLogo(R.drawable.nurse_timer_logo)
+							.build(),
+					RC_SIGN_IN);
+		}
     }
 
     private void setupBluetooth() {
-        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+		mProgressDlg.show();
+		mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         mDeviceList = mBluetoothAdapter.getBondedDevices();
-
 
         if (mBluetoothAdapter == null) {
             Log.e("ERROR", "Bluetooth not supported");
@@ -154,16 +177,14 @@ public class MainActivity extends Activity {
             }
         }
 		// Register the BroadcastReceiver
-		if(miracle != null){
-			mArrayAdapter.clear();
-		}else {
+		if(miracle == null){
 			IntentFilter bluetoothFilter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
 			bluetoothFilter.addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED);
 			bluetoothFilter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
 			registerReceiver(mReceiver, bluetoothFilter);
-			if (mBluetoothAdapter.startDiscovery()) {
-				mProgressDlg.show();
-			}
+			mIsReceiverRegistered = true;
+			mBluetoothAdapter.startDiscovery();
+			Log.d(TAG, "Discovery mode");
 		}
 
 		mArrayAdapter.clear();
@@ -218,10 +239,20 @@ public class MainActivity extends Activity {
 		mStatus.setTextColor(ContextCompat.getColor(getApplicationContext(), textColor));
 	}
 
+
+	@Override
+	public boolean onCreateOptionsMenu(final Menu menu) {
+		getMenuInflater().inflate(R.menu.main, menu);
+		return true;
+	}
+
 	@Override
 	public void onDestroy() {
 		super.onDestroy();
-		unregisterReceiver(mReceiver);
+		if(mIsReceiverRegistered) {
+			unregisterReceiver(mReceiver);
+			mIsReceiverRegistered = false;
+		}
 	}
 
 	@Override
@@ -239,7 +270,6 @@ public class MainActivity extends Activity {
         public ConnectThread(BluetoothDevice device, Handler h) {
             // Use a temporary object that is later assigned to mmSocket,
             // because mmSocket is final
-            mProgressDlg.dismiss();
             mHandler = h;
             BluetoothSocket tmp = null;
             mmDevice = device;
@@ -264,7 +294,9 @@ public class MainActivity extends Activity {
             } catch (IOException connectException) {
                 // Unable to connect; close the socket and get out
                 try {
-                    Log.d(TAG, "failed");
+					runOnUiThread(()-> {
+						dismissDialog(R.string.connection_failed, R.color.red, View.VISIBLE);
+					});
                     mmSocket.close();
                 } catch (IOException closeException) {
                 }
@@ -371,4 +403,39 @@ public class MainActivity extends Activity {
     private void showToast(String message) {
         Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show();
     }
+
+	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+		super.onActivityResult(requestCode, resultCode, data);
+		// RC_SIGN_IN is the request code you passed into startActivityForResult(...) when starting the sign in flow
+		if (requestCode == RC_SIGN_IN) {
+			if (resultCode == RESULT_OK) {
+				// user is signed in!
+				setupBluetooth();
+				return;
+			}
+
+			// Sign in canceled
+			if (resultCode == RESULT_CANCELED) {
+				showSnackbar(R.string.sign_in_cancelled);
+				return;
+			}
+
+			// No network
+			if (resultCode == ResultCodes.RESULT_NO_NETWORK) {
+				showSnackbar(R.string.no_internet_connection);
+				return;
+			}
+
+			// User is not signed in. Maybe just wait for the user to press
+			// "sign in" again, or show a message.
+		}
+	}
+
+	public void showSnackbar(int messageId){
+		Snackbar.make(findViewById(R.id.main_content_view), messageId, Snackbar.LENGTH_LONG)
+				.setAction("CLOSE", view -> {
+				})
+				.setActionTextColor(getResources().getColor(android.R.color.holo_red_light ))
+				.show();
+	}
 }
